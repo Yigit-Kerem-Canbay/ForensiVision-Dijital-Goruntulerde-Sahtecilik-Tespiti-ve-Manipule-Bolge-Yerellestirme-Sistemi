@@ -52,6 +52,10 @@ desktop.ini
 # Large dataset caches & test outputs
 data/raw/*
 !data/raw/.gitkeep
+data/interim/*
+!data/interim/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
 data/ground_truth/*
 !data/ground_truth/.gitkeep
 data/output/*
@@ -60,6 +64,11 @@ data/output/*
 *.pth
 *.pt
 *.onnx
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
 
 # Logs and temporary files
 *.log

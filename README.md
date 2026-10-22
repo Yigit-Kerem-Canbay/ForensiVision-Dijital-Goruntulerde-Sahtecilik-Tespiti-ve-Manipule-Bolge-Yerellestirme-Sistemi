@@ -88,40 +88,67 @@ Saldırganlar veya sosyal medya platformları manipülasyon izlerini gizlemek am
 
 ---
 
-## 📁 Planlanan Proje Dizini
+## 📁 Proje Dizin Yapısı
 
 ```text
 ForensiVision/
-├── docs/                 # Raporlar, mimari dökümanlar ve analizler
-├── src/                  # Kaynak kodlar
-│   ├── preprocessing/    # Ön işleme ve normalizasyon modülleri
-│   ├── features/         # SIFT, ORB öznitelik çıkarım modülleri
-│   ├── verification/     # RANSAC ve geometrik doğrulama
-│   ├── segmentation/     # Morfolojik işlemler ve maskeleme
-│   └── utils/            # Görselleştirme ve yardımcı araçlar
-├── data/                 # Veri seti indeksleri ve test örnekleri
-│   ├── raw/              # Ham test görüntüleri
-│   ├── ground_truth/     # Doğrulama (GT) maskeleri
-│   └── output/           # Çıktı maskeleri ve raporlar
-├── tests/                # Birim ve entegrasyon testleri
-├── .gitignore            # Git dışlama kuralları
-├── requirements.txt      # Gerekli bağımlılıklar
-└── README.md             # Proje ana tanıtım dökümanı
+├── docs/                      # Raporlar, mimari dökümanlar ve analizler
+├── src/
+│   └── forensivision/         # Ana Python paketi
+│       ├── copy_move/         # Copy-Move tespiti ve yerelleştirme (SIFT/ORB + RANSAC)
+│       ├── splicing/          # Image Splicing tespiti ve analizi (Gürültü/ELA)
+│       ├── evaluation/        # Değerlendirme metrikleri (Precision, Recall, F1, IoU)
+│       └── visualization/     # Maske ve adli tespit görselleştirmeleri
+├── tests/                     # Birim ve doğrulama testleri (pytest)
+├── scripts/                   # Yardımcı veri hazırlama ve toplu çalıştırma betikleri
+├── data/
+│   ├── raw/                   # Ham test görüntüleri (Git dışı)
+│   ├── interim/               # Ara işlenmiş görüntüler/öznitelikler (Git dışı)
+│   └── processed/             # Sonuç maskeleri ve test çıktıları (Git dışı)
+├── pyproject.toml             # Paketleme ve pytest yapılandırması
+├── requirements.txt           # Temel bağımlılıklar
+├── .gitignore                 # Git dışlama kuralları
+└── README.md                  # Proje ana tanıtım dökümanı
+```
+
+---
+
+## 💻 Geliştirme Ortamı ve Kurulum (Windows)
+
+### 1. Sanal Ortamı Etkinleştirme
+Windows PowerShell üzerinde:
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+*(Komut İstemi / CMD için: `.\.venv\Scripts\activate.bat`)*
+
+> [!TIP]
+> Eğer PowerShell üzerinde betik çalıştırma yetki uyarısı (*execution policy*) alırsanız, geçici olarak yetki vermek için:
+> `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope Process` komutunu çalıştırabilirsiniz.
+
+### 2. Bağımlılıkların Kurulumu ve Paket Kaydı
+```bash
+pip install -r requirements.txt
+pip install -e .
+```
+
+### 3. Testlerin Çalıştırılması
+Altyapı doğrulama ve smoke testlerini çalıştırmak için:
+```bash
+pytest
 ```
 
 ---
 
 ## 🚀 Geliştirme Süreci ve Yol Haritası
 
-- [x] Proje gereksinimlerinin ve kapsamının tanımlanması
-- [x] Git sürüm kontrol altyapısının kurulması
-- [ ] Gereksinim analizi ve mimari planlama
-- [ ] Copy-Move modülü (SIFT/ORB + RANSAC) prototipi
-- [ ] Image Splicing analiz modülü entegrasyonu
-- [ ] Morfolojik maskeleme ve görselleştirme boru hattı
-- [ ] Akademik veri setleri ile benchmark testleri (F1, IoU)
-- [ ] Dayanıklılık (Robustness) deneyleri ve sonuç raporlama
-- [ ] Kullanıcı arayüzü (Web / Masaüstü) entegrasyonu
+- [x] **Aşama 1 — Proje Altyapısı:** Modüler paket mimarisi, sanal ortam, `.gitignore`, bağımlılık yönetimi ve smoke testleri tamamlandı.
+- [ ] **Aşama 2 — Değerlendirme Motoru:** Precision, Recall, F1-Score ve IoU piksel maske karşılaştırma testleri.
+- [ ] **Aşama 3 — Copy-Move Modülü:** CoMoFoD alt kümesi ile SIFT/ORB + RANSAC ve bölge maskeleme prototipi.
+- [ ] **Aşama 4 — Splicing Modülü:** Gürültü tutarsızlığı (Noise Discrepancy) ve ELA analizleri.
+- [ ] **Aşama 5 — Veri Seti ve Kapsamlı Deneyler:** DEFACTO / CASIA üzerinde toplu deneyler ve dayanıklılık analizleri.
+- [ ] **Aşama 6 — Arayüz ve Sunum:** Canlı adli analiz ve görsel maskeleme Streamlit arayüzü.
+
 
 ---
 
