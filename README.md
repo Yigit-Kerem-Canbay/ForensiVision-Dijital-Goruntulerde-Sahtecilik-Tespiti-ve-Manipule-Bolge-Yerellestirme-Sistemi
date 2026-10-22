@@ -144,7 +144,7 @@ pytest
 
 - [x] **Aşama 1 — Proje Altyapısı:** Modüler paket mimarisi, sanal ortam, `.gitignore`, bağımlılık yönetimi ve smoke testleri tamamlandı.
 - [x] **Aşama 2 — Değerlendirme Motoru:** Precision, Recall, F1-Score ve IoU piksel maske karşılaştırma testleri tamamlandı.
-- [ ] **Aşama 3 — Copy-Move Modülü:** CoMoFoD alt kümesi ile SIFT/ORB + RANSAC ve bölge maskeleme prototipi.
+- [x] **Aşama 3 — Copy-Move Modülü:** SIFT öznitelik çıkarımı, öz-eşleme filtreleme, RANSAC afin doğrulama ve morfolojik bölge maskeleme prototipi tamamlandı.
 - [ ] **Aşama 4 — Splicing Modülü:** Gürültü tutarsızlığı (Noise Discrepancy) ve ELA analizleri.
 - [ ] **Aşama 5 — Veri Seti ve Kapsamlı Deneyler:** DEFACTO / CASIA üzerinde toplu deneyler ve dayanıklılık analizleri.
 - [ ] **Aşama 6 — Arayüz ve Sunum:** Canlı adli analiz ve görsel maskeleme Streamlit arayüzü.
