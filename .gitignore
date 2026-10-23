@@ -50,16 +50,25 @@ Thumbs.db
 desktop.ini
 
 # Large dataset caches & test outputs
-data/raw/*
-!data/raw/.gitkeep
-data/interim/*
-!data/interim/.gitkeep
-data/processed/*
-!data/processed/.gitkeep
-data/ground_truth/*
-!data/ground_truth/.gitkeep
-data/output/*
-!data/output/.gitkeep
+data/raw/**
+!data/raw/**/
+!data/raw/**/.gitkeep
+data/interim/**
+!data/interim/**/
+!data/interim/**/.gitkeep
+data/processed/**
+!data/processed/**/
+!data/processed/**/.gitkeep
+data/ground_truth/**
+!data/ground_truth/**/
+!data/ground_truth/**/.gitkeep
+data/manifests/**
+!data/manifests/**/
+!data/manifests/**/.gitkeep
+data/output/**
+!data/output/**/
+!data/output/**/.gitkeep
+
 *.h5
 *.pth
 *.pt

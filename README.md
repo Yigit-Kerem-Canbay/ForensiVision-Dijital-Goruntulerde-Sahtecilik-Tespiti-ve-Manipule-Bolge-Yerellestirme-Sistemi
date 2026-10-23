@@ -98,18 +98,57 @@ ForensiVision/
 │       ├── copy_move/         # Copy-Move tespiti ve yerelleştirme (SIFT/ORB + RANSAC)
 │       ├── splicing/          # Image Splicing tespiti ve analizi (Gürültü/ELA)
 │       ├── evaluation/        # Değerlendirme metrikleri (Precision, Recall, F1, IoU)
+│       ├── datasets/          # Modüler veri seti okuyucuları (CoMoFoD, Columbia, Base, Manifest)
 │       └── visualization/     # Maske ve adli tespit görselleştirmeleri
-├── tests/                     # Birim ve doğrulama testleri (pytest)
-├── scripts/                   # Yardımcı veri hazırlama ve toplu çalıştırma betikleri
+├── tests/                     # Birim ve doğrulama testleri (pytest - 47 test)
+├── scripts/                   # Yardımcı veri hazırlama, sentetik demolar ve deney betikleri
+│   ├── demo_synthetic_copy_move.py
+│   ├── demo_synthetic_splicing.py
+│   └── evaluate_dataset.py    # Tekrarlanabilir toplu değerlendirme ve raporlama betiği
 ├── data/
-│   ├── raw/                   # Ham test görüntüleri (Git dışı)
-│   ├── interim/               # Ara işlenmiş görüntüler/öznitelikler (Git dışı)
-│   └── processed/             # Sonuç maskeleri ve test çıktıları (Git dışı)
+│   ├── raw/                   # Ham veri setleri (comofod, columbia, casia, defacto) [Git dışı]
+│   ├── manifests/             # Veri seti indeks ve manifest dosyaları (JSON/CSV)
+│   ├── output/experiments/    # Deney çıktıları, metrik tabloları ve raporlar [Git dışı]
+│   ├── interim/               # Ara işlenmiş görüntüler/öznitelikler [Git dışı]
+│   └── processed/             # Sonuç maskeleri ve test çıktıları [Git dışı]
 ├── pyproject.toml             # Paketleme ve pytest yapılandırması
 ├── requirements.txt           # Temel bağımlılıklar
-├── .gitignore                 # Git dışlama kuralları
+├── .gitignore                 # Git dışlama kuralları (veri setlerini ve ağır çıktıları korur)
 └── README.md                  # Proje ana tanıtım dökümanı
 ```
+
+---
+
+## 🧪 Tekrarlanabilir Deney ve Veri Seti Değerlendirme Altyapısı (Aşama 5)
+
+ForensiVision, algoritmaların başarısını doğrulamak için akademik standartlarda, deterministik ve CPU dostu bir deney çerçevesi sunar:
+
+### 1. Desteklenen Veri Setleri ve Yerel Klasörleme
+- **CoMoFoD (University of Zagreb):** Copy-Move manipülasyonları ve 10 farklı saldırı varyantı (`data/raw/comofod/`).
+- **Columbia Color Splicing (Columbia DVMM):** Sıkıştırılmamış TIFF formatında montaj görüntüleri ve kenar maskeleri (`data/raw/columbia/`).
+- **CASIA & DEFACTO:** Gelecek genişlemeler için altyapı klasörleri hazırlanmıştır (`data/raw/casia/`, `data/raw/defacto/`).
+
+> [!NOTE]
+> Akademik kullanım ve lisans koşulları gereği ham veri seti görüntüleri Git deposuna dahil edilmez ve otomatik indirilmez. İlgili veri setleri resmi kaynaklarından temin edilerek `data/raw/<dataset_adi>/` dizinine yerleştirilmelidir.
+
+### 2. Değerlendirme İlkeleri ve Protokol
+- **Veri Sızıntısını Önleme (Data Leakage Prevention):** CoMoFoD gibi veri setlerinde aynı temel görselin dönüşümleri `group_id` ile kümelenir; varyantların ayrışması engellenir.
+- **Temiz Görüntü Ayrımı (Authentic / False Alarm Separation):** Gerçek maskesi boş olan özgün görüntüler, manipüle edilmiş görüntülerin makro IoU/F1 metriklerine dahil edilmez; ayrı bir **Yanlış Alarm Oranı (False Alarm Rate - FAR)** tablosunda raporlanır.
+- **Makro ve Mikro Metrikler:** Hem örnek bazlı ortalama (Macro) hem de toplam piksel sayımlarından türetilen genel skor (Micro) üretilir.
+- **Hata Toleransı:** Bozuk veya okunamayan görüntüler deneyi kırmaz; `failures.csv` dosyasına kaydedilerek deney sürdürülür.
+
+### 3. Değerlendirme Komutunun Çalıştırılması
+Örnek CPU kontrollü pilot deney (30 örnek, deterministik tohum 42):
+```bash
+python scripts/evaluate_dataset.py --dataset comofod --root data/raw/comofod --limit 30 --seed 42 --output data/output/experiments/comofod_pilot
+```
+
+Üretilen Deney Çıktıları:
+- `metrics.csv`: Her görüntü için Precision, Recall, F1, IoU, TP, FP, FN ve süre.
+- `summary.json`: Tüm deneyin makine tarafından okunabilir metaveri ve parametre özeti.
+- `report.md`: Markdown formatında akademik özet raporu.
+- `failures.csv`: İşlenemeyen örnekler ve hata detayları.
+- `examples/`: Doğruluk maskesi, tahmin ve bindirme (overlay) karşılaştırma görselleri.
 
 ---
 
@@ -133,7 +172,7 @@ pip install -e .
 ```
 
 ### 3. Testlerin Çalıştırılması
-Altyapı doğrulama ve smoke testlerini çalıştırmak için:
+Tüm birim ve entegrasyon testlerini (47 test) çalıştırmak için:
 ```bash
 pytest
 ```
@@ -146,7 +185,7 @@ pytest
 - [x] **Aşama 2 — Değerlendirme Motoru:** Precision, Recall, F1-Score ve IoU piksel maske karşılaştırma testleri tamamlandı.
 - [x] **Aşama 3 — Copy-Move Modülü:** SIFT öznitelik çıkarımı, öz-eşleme filtreleme, RANSAC afin doğrulama ve morfolojik bölge maskeleme prototipi tamamlandı.
 - [x] **Aşama 4 — Splicing Modülü:** Error Level Analysis (ELA) ve Gürültü Tutarsızlığı (Noise Inconsistency) analiz motoru ve füzyon prototipi tamamlandı.
-- [ ] **Aşama 5 — Veri Seti ve Kapsamlı Deneyler:** DEFACTO / CASIA üzerinde toplu deneyler ve dayanıklılık analizleri.
+- [x] **Aşama 5 — Veri Seti Altyapısı ve Tekrarlanabilir Deneyler:** CoMoFoD ve Columbia veri adaptörleri, manifest oluşturucu, makro/mikro metrik raporlayıcı, temiz görüntü ayrımı ve dayanıklı test altyapısı tamamlandı. *(Gerçek veri setlerinin yerel klasöre indirilip yerleştirilmesiyle tam deneyler çalıştırılabilir durumdadır).*
 - [ ] **Aşama 6 — Arayüz ve Sunum:** Canlı adli analiz ve görsel maskeleme Streamlit arayüzü.
 
 
