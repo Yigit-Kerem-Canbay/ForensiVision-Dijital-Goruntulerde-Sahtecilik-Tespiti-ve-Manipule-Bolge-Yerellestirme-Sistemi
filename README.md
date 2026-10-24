@@ -99,8 +99,9 @@ ForensiVision/
 │       ├── splicing/          # Image Splicing tespiti ve analizi (Gürültü/ELA)
 │       ├── evaluation/        # Değerlendirme metrikleri (Precision, Recall, F1, IoU)
 │       ├── datasets/          # Modüler veri seti okuyucuları (CoMoFoD, Columbia, Base, Manifest)
+│       ├── ui/                # Web arayüzü yardımcı fonksiyonları ve sentetik demo motoru
 │       └── visualization/     # Maske ve adli tespit görselleştirmeleri
-├── tests/                     # Birim ve doğrulama testleri (pytest - 47 test)
+├── tests/                     # Birim ve doğrulama testleri (pytest - 60 test)
 ├── scripts/                   # Yardımcı veri hazırlama, sentetik demolar ve deney betikleri
 │   ├── demo_synthetic_copy_move.py
 │   ├── demo_synthetic_splicing.py
@@ -111,8 +112,9 @@ ForensiVision/
 │   ├── output/experiments/    # Deney çıktıları, metrik tabloları ve raporlar [Git dışı]
 │   ├── interim/               # Ara işlenmiş görüntüler/öznitelikler [Git dışı]
 │   └── processed/             # Sonuç maskeleri ve test çıktıları [Git dışı]
+├── app.py                     # Streamlit tabanlı modern web arayüzü
 ├── pyproject.toml             # Paketleme ve pytest yapılandırması
-├── requirements.txt           # Temel bağımlılıklar
+├── requirements.txt           # Temel bağımlılıklar (Streamlit dahil)
 ├── .gitignore                 # Git dışlama kuralları (veri setlerini ve ağır çıktıları korur)
 └── README.md                  # Proje ana tanıtım dökümanı
 ```
@@ -152,6 +154,40 @@ python scripts/evaluate_dataset.py --dataset comofod --root data/raw/comofod --l
 
 ---
 
+## 🖥️ Web Arayüzü ve Canlı Adli Analiz (Aşama 6 — Streamlit)
+
+ForensiVision, analiz motorlarını adli bilişim uzmanlarının ve araştırmacıların doğrudan kullanabilmesi için modern, Türkçe ve akademik standartlarda bir Streamlit arayüzü sunar:
+
+### 1. Web Uygulamasını Başlatma
+Sanal ortam etkinleştirildikten sonra proje kök dizininde:
+```bash
+streamlit run app.py
+```
+Komut çalıştırıldığında tarayıcınızda otomatik olarak `http://localhost:8501` adresi açılacaktır.
+
+### 2. Arayüzün Öne Çıkan Özellikleri
+- **Canlı Görüntü Yükleme:** Bilgisayarınızdan JPEG, PNG veya BMP formatındaki görüntüleri güvenli şekilde yükleyebilirsiniz. (Boyut ve bellek sınırları CPU güvenliği için denetlenir).
+- **Esnek Analiz Seçenekleri:**
+  1. *Copy-Move Analizi:* SIFT ve RANSAC ile klonlanmış şüpheli alanları ve geometrik transfer çizgilerini araştırır.
+  2. *Image Splicing Analizi:* ELA ve gürültü tutarsızlığı haritalarını çıkararak dışarıdan eklenen yamaları tespit eder.
+  3. *Her İki Analiz:* İki dedektörü bağımsız çalıştırarak sonuçları ayrı sekmelerde sunar; birinin başarısızlığı diğerini engellemez.
+- **Dürüst Metrik Politikası:**
+  - Gerçek manipülasyon maskesi (Ground Truth) yüklenmediğinde Precision, Recall, F1 ve IoU metrikleri **asla uydurulmaz veya tahmin edilmez**; arayüzde *"Hesaplanamadı — doğruluk maskesi gerekli"* uyarısı verilir.
+  - İsteğe bağlı olarak görselle aynı boyutta bir zemin maskesi yüklendiğinde piksel düzeyinde doğruluk metrikleri hesaplanır.
+- **Zengin Görsel Paneller ve Lejant:**
+  - Orijinal görüntü, ikili tahmin maskesi, yarı saydam kırmızı maske bindirmesi (overlay).
+  - Kaynak ve hedef bölgeleri birleştiren afin eşleşme vektörleri.
+  - Normalize ELA fark haritası ve yerel gürültü standart sapma haritası.
+- **İndirilebilir Çıktılar:**
+  - Tahmin maskesi (PNG),
+  - Maske bindirmeli görsel (PNG),
+  - ELA ve Gürültü haritaları (PNG),
+  - Tüm analiz detaylarını, parametreleri ve süreleri içeren teknik JSON raporu.
+- **Sentetik Demo Modu:**
+  - Ham veri setleri yerel klasörlerde bulunmasa dahi kullanıcı arayüzünü deneyimleyebilmek için tek tıkla çalışan sentetik Copy-Move ve Splicing senaryoları.
+
+---
+
 ## 💻 Geliştirme Ortamı ve Kurulum (Windows)
 
 ### 1. Sanal Ortamı Etkinleştirme
@@ -172,7 +208,7 @@ pip install -e .
 ```
 
 ### 3. Testlerin Çalıştırılması
-Tüm birim ve entegrasyon testlerini (47 test) çalıştırmak için:
+Tüm birim, entegrasyon ve UI testlerini (60 test) çalıştırmak için:
 ```bash
 pytest
 ```
@@ -186,7 +222,7 @@ pytest
 - [x] **Aşama 3 — Copy-Move Modülü:** SIFT öznitelik çıkarımı, öz-eşleme filtreleme, RANSAC afin doğrulama ve morfolojik bölge maskeleme prototipi tamamlandı.
 - [x] **Aşama 4 — Splicing Modülü:** Error Level Analysis (ELA) ve Gürültü Tutarsızlığı (Noise Inconsistency) analiz motoru ve füzyon prototipi tamamlandı.
 - [x] **Aşama 5 — Veri Seti Altyapısı ve Tekrarlanabilir Deneyler:** CoMoFoD ve Columbia veri adaptörleri, manifest oluşturucu, makro/mikro metrik raporlayıcı, temiz görüntü ayrımı ve dayanıklı test altyapısı tamamlandı. *(Gerçek veri setlerinin yerel klasöre indirilip yerleştirilmesiyle tam deneyler çalıştırılabilir durumdadır).*
-- [ ] **Aşama 6 — Arayüz ve Sunum:** Canlı adli analiz ve görsel maskeleme Streamlit arayüzü.
+- [x] **Aşama 6 — Arayüz ve Sunum:** Streamlit tabanlı modern adli analiz arayüzü, çoklu görsel paneller, dürüst metrik denetimi, sentetik demo modu ve indirilebilir PNG/JSON çıktıları tamamlandı.
 
 
 ---

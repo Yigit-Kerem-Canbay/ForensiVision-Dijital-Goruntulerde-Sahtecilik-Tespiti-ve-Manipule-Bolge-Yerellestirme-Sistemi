@@ -4,6 +4,7 @@ opencv-python>=4.8.0
 pillow>=10.0.0
 matplotlib>=3.7.0
 scikit-learn>=1.3.0
+streamlit>=1.30.0
 
 # Test ve Kalite Güvencesi
 pytest>=7.4.0
