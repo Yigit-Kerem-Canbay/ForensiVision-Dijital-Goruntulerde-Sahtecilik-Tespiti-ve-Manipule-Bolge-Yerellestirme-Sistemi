@@ -62,18 +62,25 @@ class CoMoFoDDataset(BaseDataset):
             if f.is_file() and f.suffix.lower() in (".png", ".jpg", ".jpeg", ".tif", ".bmp")
         ]
 
-        # 1. Maskeleri indeksle: {group_id: Path}
-        # Örnek: '001_B.png' veya '001_B_RT1.png'
+        # 1. Maskeleri indeksle
+        # Yalnızca dosya kökü tam olarak {ID}_B olanlar ikili maske, {ID}_M olanlar renkli maske
+        # (Örn: '001_B.png', '001_M.png'). Alt dize '_B' kullanımı '001_F_BC1' gibi görselleri bozmamalıdır.
         binary_masks: dict[str, Path] = {}
         color_masks: dict[str, Path] = {}
+        mask_pattern = re.compile(r"^(\d+)_([BM])$", re.IGNORECASE)
 
         for f in all_files:
             stem = f.stem
-            # _B (ikili maske) veya _M (renkli maske)
-            if "_B" in stem:
-                binary_masks[stem] = f
-            elif "_M" in stem:
-                color_masks[stem] = f
+            mask_match = mask_pattern.match(stem)
+            if mask_match:
+                gid = mask_match.group(1)
+                mtype = mask_match.group(2).upper()
+                if mtype == "B":
+                    binary_masks[gid] = f
+                    binary_masks[stem] = f
+                elif mtype == "M":
+                    color_masks[gid] = f
+                    color_masks[stem] = f
 
         samples: list[DatasetSample] = []
 
@@ -84,17 +91,17 @@ class CoMoFoDDataset(BaseDataset):
 
         for f in all_files:
             stem = f.stem
-            # Maske dosyalarını ana görüntü olarak sayma
-            if "_B" in stem or "_M" in stem:
+            # Maske dosyalarını ana görüntü olarak sayma (tam eşleşme denetimi)
+            if mask_pattern.match(stem):
                 continue
 
             match = pattern.match(stem)
             if not match:
                 continue
 
-            group_id = match.group(1)       # '001'
+            group_id = match.group(1)           # '001'
             type_code = match.group(2).upper()  # 'O' veya 'F'
-            attack_code = match.group(3)   # 'JC1', 'RT2' veya None
+            attack_code = match.group(3)        # 'JC1', 'BC1', 'RT2' veya None
 
             is_auth = (type_code == "O")
             manipulation_type = "authentic" if is_auth else "copy_move"
@@ -109,16 +116,41 @@ class CoMoFoDDataset(BaseDataset):
 
             # İlgili maskeyi bul
             mask_path: Path | None = None
+            color_mask_path: Path | None = None
             if not is_auth:
-                # Önce spesifik maske ara (örn. 001_B_RT1.png), yoksa temel maskeyi (001_B.png) al
+                # Önce spesifik maske ara (örn. 001_B_RT1.png), yoksa temel maskeyi (001_B) al
                 variant_mask_key = f"{group_id}_B_{attack_code}" if attack_code else f"{group_id}_B"
-                mask_path = binary_masks.get(variant_mask_key) or binary_masks.get(f"{group_id}_B")
+                mask_path = binary_masks.get(variant_mask_key) or binary_masks.get(group_id) or binary_masks.get(f"{group_id}_B")
+                color_mask_path = color_masks.get(group_id) or color_masks.get(f"{group_id}_M")
 
-            # Orijinal karşılık dosyasını bul (varsa)
-            auth_path = None
-            auth_candidate = f.parent / f"{group_id}_O{f.suffix}"
-            if auth_candidate.exists():
-                auth_path = auth_candidate
+            # Orijinal ve sahte görüntü eşleştirmesi
+            # Eşleştirme yaparken dönüşüm türünü, numarasını ve dosya uzantısını koru:
+            # 001_F.png -> 001_O.png
+            # 001_F_BC1.png -> 001_O_BC1.png
+            # 001_F_JC1.jpg -> 001_O_JC1.jpg (dosya mevcutsa)
+            auth_path: Path | None = None
+            metadata_dict: dict[str, Any] = {
+                "attack_code": attack_code,
+                "dataset_source": "University of Zagreb CoMoFoD",
+            }
+            if color_mask_path:
+                metadata_dict["color_mask_path"] = str(color_mask_path)
+
+            if is_auth:
+                auth_path = f
+            else:
+                expected_auth_name = (
+                    f"{group_id}_O_{attack_code}{f.suffix}"
+                    if attack_code
+                    else f"{group_id}_O{f.suffix}"
+                )
+                auth_candidate = f.parent / expected_auth_name
+                if auth_candidate.exists():
+                    auth_path = auth_candidate
+                else:
+                    auth_path = None
+                    metadata_dict["authentic_pair_missing"] = True
+                    metadata_dict["expected_authentic_filename"] = expected_auth_name
 
             sample = DatasetSample(
                 sample_id=stem,
@@ -129,10 +161,7 @@ class CoMoFoDDataset(BaseDataset):
                 manipulation_type=manipulation_type,
                 variant=variant_name,
                 group_id=group_id,
-                metadata={
-                    "attack_code": attack_code,
-                    "dataset_source": "University of Zagreb CoMoFoD",
-                },
+                metadata=metadata_dict,
             )
             samples.append(sample)
 
