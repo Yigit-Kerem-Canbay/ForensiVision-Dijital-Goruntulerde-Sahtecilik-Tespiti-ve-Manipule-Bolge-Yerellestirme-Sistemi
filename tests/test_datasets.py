@@ -27,6 +27,7 @@ from forensivision.datasets import (
     BaseDataset,
     CoMoFoDDataset,
     ColumbiaDataset,
+    DefactoDataset,
     DatasetSample,
     build_manifest,
     load_manifest,
@@ -470,7 +471,7 @@ def test_comofod_real_dataset_integrity():
     - Zero masks counted as samples.
     """
     real_dir = Path("data/raw/comofod")
-    if not real_dir.is_dir() or not any(real_dir.glob("*.png")):
+    if not real_dir.is_dir() or not (real_dir / "001_F.png").exists():
         pytest.skip("Real CoMoFoD dataset not present on disk, skipping.")
 
     ds = CoMoFoDDataset(real_dir)
@@ -487,4 +488,415 @@ def test_comofod_real_dataset_integrity():
     for s in samples:
         assert not s.sample_id.endswith("_B")
         assert not s.sample_id.endswith("_M")
+
+
+def test_run_evaluation_group_sampling(mock_comofod_dir: Path, tmp_path: Path):
+    """Verifies run_evaluation with group-based sampling and variant filtering."""
+    output_dir = tmp_path / "exp_group_sampling"
+
+    summary = run_evaluation(
+        dataset_name="comofod",
+        root_dir=mock_comofod_dir,
+        task="copy_move",
+        limit=1,
+        seed=42,
+        output_dir=output_dir,
+        variant_filter="clean",
+        sample_by_group=True,
+    )
+
+    assert summary["status"] == "COMPLETED"
+    assert len(summary["selected_group_ids"]) == 1
+    # 1 group selected means 1 forged clean and 1 authentic clean = 2 samples
+    assert summary["total_evaluated_samples"] == 2
+    assert summary["manipulated_samples_count"] == 1
+    assert summary["authentic_samples_count"] == 1
+    assert summary["authentic_analysis"]["empty_masks_count"] >= 0
+
+
+def test_run_evaluation_timing_measurements(mock_comofod_dir: Path, tmp_path: Path):
+    """
+    Verifies that run_evaluation measures fine-grained timings:
+    - image_load_ms, detector_wall_ms, detector_cpu_ms, mask_load_ms, sample_wall_ms
+    - Backward-compatible time_ms matches sample_wall_ms
+    - timing_analysis dictionary exists in summary with correct keys
+    - report.md includes structured timing breakdown
+    """
+    import csv
+    from scripts.evaluate_dataset import _format_duration
+
+    output_dir = tmp_path / "exp_timing"
+
+    summary = run_evaluation(
+        dataset_name="comofod",
+        root_dir=mock_comofod_dir,
+        task="copy_move",
+        limit=2,
+        seed=42,
+        output_dir=output_dir,
+    )
+
+    assert summary["status"] == "COMPLETED"
+
+    # 1. Verify metrics.csv contains explicit timing columns
+    csv_path = output_dir / "metrics.csv"
+    assert csv_path.exists()
+    with open(csv_path, "r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        rows = list(reader)
+
+    assert len(rows) > 0
+    required_timing_cols = [
+        "time_ms",
+        "image_load_ms",
+        "detector_wall_ms",
+        "detector_cpu_ms",
+        "mask_load_ms",
+        "sample_wall_ms",
+    ]
+    for col in required_timing_cols:
+        assert col in rows[0], f"Column '{col}' must be present in metrics.csv"
+
+    for r in rows:
+        sample_wall = float(r["sample_wall_ms"])
+        det_wall = float(r["detector_wall_ms"])
+        det_cpu = float(r["detector_cpu_ms"])
+        img_load = float(r["image_load_ms"])
+        mask_load = float(r["mask_load_ms"])
+        time_legacy = float(r["time_ms"])
+
+        assert sample_wall >= 0.0
+        assert det_wall >= 0.0
+        assert det_cpu >= 0.0
+        assert img_load >= 0.0
+        assert mask_load >= 0.0
+        # Backward-compatible time_ms must match sample_wall_ms
+        assert abs(time_legacy - sample_wall) < 1e-4
+
+    # 2. Verify summary.json timing_analysis
+    assert "timing_analysis" in summary
+    t_analysis = summary["timing_analysis"]
+    for key in [
+        "total_wall_time_seconds",
+        "sum_sample_wall_seconds",
+        "mean_sample_wall_ms",
+        "mean_detector_wall_ms",
+        "mean_detector_cpu_ms",
+        "mean_image_load_ms",
+        "mean_mask_load_ms",
+    ]:
+        assert key in t_analysis, f"Key '{key}' must be in timing_analysis"
+        assert t_analysis[key] >= 0.0
+
+    # Backward compatibility fields in root summary
+    assert "total_time_seconds" in summary
+    assert "average_time_per_sample_ms" in summary
+    assert summary["total_time_seconds"] == t_analysis["total_wall_time_seconds"]
+
+    # 3. Verify report.md contains structured timing breakdown
+    report_path = output_dir / "report.md"
+    assert report_path.exists()
+    report_text = report_path.read_text(encoding="utf-8")
+    assert "Süre ve Zaman Ölçümü Dağılımı" in report_text
+    assert "Dedektör Ortalama Duvar Süresi" in report_text
+    assert "Dedektör Ortalama Süreç CPU Süresi" in report_text
+
+    # 4. Verify _format_duration helper
+    assert _format_duration(150.0) == "150.0 ms"
+    assert "sn" in _format_duration(1296.7)
+    assert "1.30 sn" in _format_duration(1296.7)
+
+
+def test_run_evaluation_supports_min_inliers_configuration(mock_comofod_dir: Path, tmp_path: Path):
+    """run_evaluation fonksiyonunun min_inliers parametresini doğru yansıttığını ve varsayılan 4'ü koruduğunu doğrular."""
+    # 1. Varsayılan çağrı: min_inliers=4 olmalı
+    out_default = tmp_path / "exp_default_inliers"
+    summary_default = run_evaluation(
+        dataset_name="comofod",
+        root_dir=mock_comofod_dir,
+        task="copy_move",
+        limit=2,
+        seed=42,
+        output_dir=out_default,
+    )
+    assert summary_default["copy_move_config"]["min_inliers"] == 4
+
+    # 2. Özel min_inliers=10 çağrısı: min_inliers=10 olmalı
+    out_10 = tmp_path / "exp_inliers_10"
+    summary_10 = run_evaluation(
+        dataset_name="comofod",
+        root_dir=mock_comofod_dir,
+        task="copy_move",
+        limit=2,
+        seed=42,
+        output_dir=out_10,
+        min_inliers=10,
+    )
+    assert summary_10["copy_move_config"]["min_inliers"] == 10
+
+    # Rapor dosyasında da min_inliers=10 görünmeli
+    report_text = (out_10 / "report.md").read_text(encoding="utf-8")
+    assert "min_inliers" in report_text
+    assert "10" in report_text
+
+
+def test_run_evaluation_supports_hull_fill_guard_configuration(mock_comofod_dir: Path, tmp_path: Path):
+    """run_evaluation fonksiyonunun hull_fill_guard parametresini ve özet/rapor çıktısını doğruladığını test eder."""
+    out_dir = tmp_path / "exp_hull_guard"
+    summary = run_evaluation(
+        dataset_name="comofod",
+        root_dir=mock_comofod_dir,
+        task="copy_move",
+        limit=2,
+        seed=42,
+        output_dir=out_dir,
+        min_inliers=4,
+        hull_fill_guard=True,
+        hull_max_ratio=4.0,
+    )
+
+    # 1. summary.json konfigürasyonunu kontrol et
+    cm_cfg = summary["copy_move_config"]
+    assert cm_cfg["hull_fill_guard"] is True
+    assert cm_cfg["hull_max_ratio"] == 4.0
+    assert cm_cfg["min_inliers"] == 4
+
+    # 2. summary.json dosyasından okuma kontrolü
+    with open(out_dir / "summary.json", encoding="utf-8") as f:
+        loaded = json.load(f)
+    assert loaded["copy_move_config"]["hull_fill_guard"] is True
+    assert loaded["copy_move_config"]["hull_max_ratio"] == 4.0
+
+    # 3. report.md içeriğini kontrol et
+    report_text = (out_dir / "report.md").read_text(encoding="utf-8")
+    assert "hull_fill_guard" in report_text
+    assert "Etkin (True)" in report_text
+    assert "hull_max_ratio" in report_text
+    assert "4.0" in report_text
+
+
+def test_run_evaluation_supports_spatial_cluster_guard_configuration(mock_comofod_dir: Path, tmp_path: Path):
+    """run_evaluation fonksiyonunun spatial_cluster_guard parametresini ve cluster_diagnostics.csv çıktısını doğruladığını test eder."""
+    out_dir = tmp_path / "exp_cluster_guard"
+    summary = run_evaluation(
+        dataset_name="comofod",
+        root_dir=mock_comofod_dir,
+        task="copy_move",
+        limit=2,
+        seed=42,
+        output_dir=out_dir,
+        min_inliers=4,
+        spatial_cluster_guard=True,
+        cluster_eps=35.0,
+        cluster_min_samples=3,
+        cluster_min_support_ratio=0.50,
+    )
+
+    # 1. summary.json konfigürasyonunu kontrol et
+    cm_cfg = summary["copy_move_config"]
+    assert cm_cfg["spatial_cluster_guard"] is True
+    assert cm_cfg["cluster_eps_px"] == 35.0
+    assert cm_cfg["cluster_min_samples"] == 3
+    assert cm_cfg["cluster_min_support_ratio"] == 0.50
+
+    # 2. summary.json dosyasından okuma kontrolü
+    with open(out_dir / "summary.json", encoding="utf-8") as f:
+        loaded = json.load(f)
+    assert loaded["copy_move_config"]["spatial_cluster_guard"] is True
+
+    # 3. report.md içeriğini kontrol et
+    report_text = (out_dir / "report.md").read_text(encoding="utf-8")
+    assert "spatial_cluster_guard" in report_text
+    assert "Etkin (True)" in report_text
+    assert "cluster_eps_px" in report_text
+    assert "35.0" in report_text
+
+    # 4. cluster_diagnostics.csv dosyasını kontrol et
+    diag_csv_path = out_dir / "cluster_diagnostics.csv"
+    assert diag_csv_path.exists()
+    diag_text = diag_csv_path.read_text(encoding="utf-8")
+    assert "sample_id" in diag_text
+    assert "ransac_inliers_count" in diag_text
+    assert "num_clusters" in diag_text
+    assert "dominant_cluster_size" in diag_text
+    assert "cluster_support_ratio" in diag_text
+    assert "filtered_inliers_count" in diag_text
+    assert "is_rejected_by_guard" in diag_text
+
+
+def test_run_evaluation_supports_group_ids_file_selection(mock_comofod_dir: Path, tmp_path: Path):
+    """
+    Verifies that run_evaluation correctly restricts evaluation to scenes
+    specified in a group_ids_file, recording the selection in summary.json and report.md.
+    """
+    out_dir = tmp_path / "exp_group_ids_file_test"
+    target_groups_file = tmp_path / "target_scenes.txt"
+    # Write scene '001' only to the target file
+    target_groups_file.write_text("001\n# Comment line\n\n", encoding="utf-8")
+
+    summary = run_evaluation(
+        dataset_name="comofod",
+        root_dir=mock_comofod_dir,
+        task="copy_move",
+        limit=10,
+        seed=42,
+        output_dir=out_dir,
+        sample_by_group=True,
+        group_ids_file=target_groups_file,
+    )
+
+    # Only scene '001' should be selected
+    assert summary["selected_group_ids"] == ["001"]
+    assert summary["group_ids_file"] == str(target_groups_file)
+    assert summary["total_evaluated_samples"] > 0
+    # Every evaluated sample must belong to group '001'
+    for s_id in [r["sample_id"] for r in csv.DictReader(open(out_dir / "metrics.csv", encoding="utf-8"))]:
+        assert s_id.startswith("001")
+
+    # Verify report.md includes group_ids_file reference
+    report_text = (out_dir / "report.md").read_text(encoding="utf-8")
+    assert "group_ids_file" in report_text
+    assert "target_scenes.txt" in report_text
+
+
+def test_defacto_parsing_and_masks(tmp_path: Path) -> None:
+    """Verifies that DefactoDataset correctly parses directory structures, stems, and loads separate masks."""
+    root = tmp_path / "defacto_mock"
+    img_dir = root / "copymove_img" / "img"
+    donor_dir = root / "copymove_annotations" / "donor_mask"
+    probe_dir = root / "copymove_annotations" / "probe_mask"
+    graph_dir = root / "copymove_annotations" / "graph"
+
+    for d in (img_dir, donor_dir, probe_dir, graph_dir):
+        d.mkdir(parents=True, exist_ok=True)
+
+    h, w = 100, 150
+    # Create sample 0_000000000071
+    img = np.full((h, w, 3), 120, dtype=np.uint8)
+    donor = np.zeros((h, w), dtype=np.uint8)
+    donor[10:30, 10:40] = 255
+    probe = np.zeros((h, w), dtype=np.uint8)
+    probe[50:70, 80:110] = 255
+
+    # Simulate JPEG artifacts around zero for probe mask
+    probe[0:5, 0:5] = 4
+
+    stem = "0_000000000071"
+    cv2.imwrite(str(img_dir / f"{stem}.tif"), img)
+    cv2.imwrite(str(donor_dir / f"{stem}.tif"), donor)
+    cv2.imwrite(str(probe_dir / f"{stem}.jpg"), probe)
+
+    graph_content = [
+        {"State": 0, "Name": "Ground Truth", "Property": {"Path": "MSCOCO/images/train2017/000000000071.jpg"}},
+        {"State": 1, "Name": "Copy and Move", "Property": {"Translation": "(481,248)", "Scale": "(1,1)", "Rotation": 0, "Mask feathering": 3}},
+    ]
+    (graph_dir / f"{stem}.json").write_text(json.dumps(graph_content), encoding="utf-8")
+
+    ds = DefactoDataset(root_dir=root, task_type="copy_move", load_metadata=True)
+    assert len(ds) == 1
+    sample = ds[0]
+
+    assert sample.sample_id == stem
+    assert sample.group_id == "000000000071"
+    assert sample.manipulation_type == "copy_move"
+    assert not sample.is_authentic()
+    assert sample.metadata["instance_id"] == "0"
+    assert sample.metadata["coco_image_id"] == "000000000071"
+    assert sample.metadata["translation"] == "(481,248)"
+
+    # Test image loading
+    loaded_img = ds.load_image(sample)
+    assert loaded_img.shape == (h, w, 3)
+
+    # Test both mask loading (merging donor and probe, and suppressing JPEG noise)
+    both_mask = ds.load_mask(sample, mask_mode="both")
+    assert both_mask.shape == (h, w)
+    # The JPEG noise region [0:5, 0:5] should be 0 because value 4 <= 127
+    assert both_mask[2, 2] == 0
+    # Both donor and probe regions should be 255
+    assert both_mask[20, 20] == 255
+    assert both_mask[60, 95] == 255
+
+    # Test target_only mask
+    tgt_mask = ds.load_mask(sample, mask_mode="target_only")
+    assert tgt_mask[60, 95] == 255
+    assert tgt_mask[20, 20] == 0
+
+    # Test source_only mask
+    src_mask = ds.load_mask(sample, mask_mode="source_only")
+    assert src_mask[20, 20] == 255
+    assert src_mask[60, 95] == 0
+
+    # Test get_sample_metadata
+    meta = ds.get_sample_metadata(stem)
+    assert meta is not None
+    assert meta["rotation"] == 0
+    assert meta["feathering"] == 3
+
+
+def test_defacto_unicode_path_handling(tmp_path: Path) -> None:
+    """Verifies that image and mask loading works seamlessly even in paths with Turkish/Unicode characters."""
+    turkish_dir = tmp_path / "Sayısal Görünntü İşleme Veri Seti" / "defacto-copymove"
+    img_dir = turkish_dir / "copymove_img" / "img"
+    donor_dir = turkish_dir / "copymove_annotations" / "donor_mask"
+    probe_dir = turkish_dir / "copymove_annotations" / "probe_mask"
+    graph_dir = turkish_dir / "copymove_annotations" / "graph"
+
+    for d in (img_dir, donor_dir, probe_dir, graph_dir):
+        d.mkdir(parents=True, exist_ok=True)
+
+    stem = "1_000000029706"
+    img = np.full((80, 80, 3), 200, dtype=np.uint8)
+    probe = np.zeros((80, 80), dtype=np.uint8)
+    probe[20:40, 20:40] = 255
+
+    # Use buffer encoding to write to Turkish path
+    is_success, buf = cv2.imencode(".tif", img)
+    assert is_success
+    (img_dir / f"{stem}.tif").write_bytes(buf.tobytes())
+
+    is_success_p, buf_p = cv2.imencode(".jpg", probe)
+    assert is_success_p
+    (probe_dir / f"{stem}.jpg").write_bytes(buf_p.tobytes())
+
+    ds = DefactoDataset(root_dir=turkish_dir, task_type="copy_move")
+    assert len(ds) == 1
+    sample = ds[0]
+
+    loaded_img = ds.load_image(sample)
+    assert loaded_img is not None
+    assert loaded_img.shape == (80, 80, 3)
+
+    loaded_mask = ds.load_mask(sample, mask_mode="target_only")
+    assert loaded_mask is not None
+    assert loaded_mask[30, 30] == 255
+
+
+def test_defacto_real_junction_sample() -> None:
+    """If the real junction at data/raw/defacto/copymove exists, test basic loading on real samples."""
+    junction_path = Path("data/raw/defacto/copymove")
+    if not junction_path.is_dir():
+        pytest.skip("DEFACTO junction not present in data/raw/defacto/copymove")
+
+    ds = DefactoDataset(root_dir=junction_path, task_type="copy_move")
+    assert len(ds) == 18194
+
+    sample = ds[0]
+    assert sample.manipulation_type == "copy_move"
+    assert not sample.is_authentic()
+    assert sample.group_id is not None
+    assert sample.target_mask_path is not None and sample.target_mask_path.exists()
+    assert sample.source_mask_path is not None and sample.source_mask_path.exists()
+
+    img = ds.load_image(sample)
+    assert img.ndim == 3
+
+    mask = ds.load_mask(sample, mask_mode="both")
+    assert mask.ndim == 2
+    assert mask.shape == img.shape[:2]
+
+
+
+
+
 

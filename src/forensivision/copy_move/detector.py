@@ -25,6 +25,7 @@ from typing import Any
 
 import cv2
 import numpy as np
+from sklearn.cluster import DBSCAN
 
 
 @dataclass
@@ -41,6 +42,12 @@ class CopyMoveConfig:
         min_inliers: Tahrifat kararı vermek için gereken minimum RANSAC inlier sayısı.
         point_radius: Her inlier anahtar noktasının etrafında çizilecek taban yarıçap (piksel).
         morph_kernel_size: Maske kapatma (closing) işleminde kullanılacak eliptik çekirdek boyutu.
+        hull_fill_guard: Dışbükey zarf doldurma koruması (seyrek noktalarda poligon doldurmayı engeller).
+        hull_max_ratio: Dışbükey zarf / taban daireler maksimum amplifikasyon oranı eşiği.
+        spatial_cluster_guard: DBSCAN tabanlı uzamsal tutarlılık koruması.
+        cluster_eps_px: DBSCAN maksimum komşuluk Öklid mesafesi (piksel).
+        cluster_min_samples: DBSCAN çekirdek nokta için gereken minimum komşu sayısı.
+        cluster_min_support_ratio: Baskın kümenin toplam inlierlara minimum destek oranı eşiği.
     """
 
     min_keypoints: int = 10
@@ -52,6 +59,12 @@ class CopyMoveConfig:
     min_inliers: int = 4
     point_radius: int = 12
     morph_kernel_size: int = 5
+    hull_fill_guard: bool = False
+    hull_max_ratio: float = 4.0
+    spatial_cluster_guard: bool = False
+    cluster_eps_px: float = 35.0
+    cluster_min_samples: int = 3
+    cluster_min_support_ratio: float = 0.50
 
 
 @dataclass(frozen=True)
@@ -69,6 +82,7 @@ class CopyMoveResult:
         matched_points_src: Kaynak bölge inlier koordinatları (N, 2 float32).
         matched_points_dst: Hedef bölge inlier koordinatları (N, 2 float32).
         config: Kullanılan tespit yapılandırması.
+        cluster_diagnostics: Uzamsal kümeleme ve inlier analiz istatistikleri.
     """
 
     mask: np.ndarray
@@ -80,6 +94,7 @@ class CopyMoveResult:
     matched_points_src: np.ndarray
     matched_points_dst: np.ndarray
     config: CopyMoveConfig
+    cluster_diagnostics: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serileştirilebilir özet sözlük döndürür (maske ve matris özet bilgileriyle)."""
@@ -92,6 +107,7 @@ class CopyMoveResult:
             "mask_shape": list(self.mask.shape),
             "mask_positive_pixels": int(np.count_nonzero(self.mask)),
             "config": asdict(self.config),
+            "cluster_diagnostics": self.cluster_diagnostics,
         }
 
 
@@ -170,10 +186,19 @@ def _build_tampered_mask(
             if 0 <= x < w and 0 <= y < h:
                 cv2.circle(mask, (x, y), config.point_radius, 255, thickness=-1)
 
-        # 2. 3 veya daha fazla nokta varsa dışbükey zarfı (convex hull) doldur
+        # 2. 3 veya daha fazla nokta varsa dışbükey zarfı (convex hull) değerlendir
         if len(pts) >= 3:
             hull = cv2.convexHull(np.int32(pts))
-            cv2.fillConvexPoly(mask, hull, 255)
+            should_fill = True
+            if config.hull_fill_guard:
+                hull_area = float(cv2.contourArea(hull))
+                base_circle_area = len(pts) * np.pi * (config.point_radius ** 2)
+                hull_amplification = hull_area / max(base_circle_area, 1.0)
+                if hull_amplification > config.hull_max_ratio:
+                    should_fill = False
+
+            if should_fill:
+                cv2.fillConvexPoly(mask, hull, 255)
 
     # 3. Küçük boşlukları ve kopuklukları gidermek için eliptik morfolojik kapanış
     if config.morph_kernel_size > 1:
@@ -183,6 +208,98 @@ def _build_tampered_mask(
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
 
     return mask
+
+
+def _apply_spatial_clustering(
+    pts_src: np.ndarray,
+    pts_dst: np.ndarray,
+    config: CopyMoveConfig,
+) -> tuple[np.ndarray, np.ndarray, dict[str, Any], bool]:
+    """RANSAC inlier eşleşmelerine DBSCAN tabanlı uzamsal tutarlılık kümelemesi uygular.
+
+    Her eşleşmenin kaynak ve hedef noktalarının orta noktası hesaplanır:
+        midpoint = (source_point + destination_point) / 2
+    DBSCAN bu orta noktalar üzerinde çalıştırılır.
+    Gürültü dışı kümelerden en çok elemana sahip olan baskın küme seçilir.
+    Eğer birden fazla küme eşit sayıda elemana sahipse, deterministik olarak
+    en küçük küme kimliğine (label) sahip olan seçilir.
+
+    Koruma (spatial_cluster_guard) etkinse:
+        1. dominant_cluster_size >= config.min_inliers
+        2. cluster_support_ratio >= config.cluster_min_support_ratio
+        koşullarının ikisi de sağlanmalıdır. Aksi halde tespit reddedilir.
+    Koruma kapalıysa:
+        İstatistikler teşhis amacıyla hesaplanır fakat filtreleme uygulanmaz.
+    """
+    total_inliers = len(pts_src)
+    empty_pts = np.empty((0, 2), dtype=np.float32)
+
+    if total_inliers == 0:
+        diag = {
+            "ransac_inliers_count": 0,
+            "num_clusters": 0,
+            "dominant_cluster_size": 0,
+            "cluster_support_ratio": 0.0,
+            "filtered_inliers_count": 0,
+            "is_rejected_by_guard": False,
+        }
+        return empty_pts, empty_pts, diag, False
+
+    midpoints = (pts_src + pts_dst) / 2.0
+    db = DBSCAN(eps=config.cluster_eps_px, min_samples=config.cluster_min_samples)
+    labels = db.fit_predict(midpoints)
+
+    non_noise_labels = [int(lbl) for lbl in np.unique(labels) if lbl != -1]
+    num_clusters = len(non_noise_labels)
+
+    if num_clusters == 0:
+        dominant_cluster_id = None
+        dominant_cluster_size = 0
+        cluster_support_ratio = 0.0
+    else:
+        cluster_counts = {lbl: int(np.sum(labels == lbl)) for lbl in non_noise_labels}
+        # Deterministik seçim: en büyük eleman sayısına sahip küme; eşitlikte en küçük etiket
+        dominant_cluster_id = min(non_noise_labels, key=lambda l: (-cluster_counts[l], l))
+        dominant_cluster_size = cluster_counts[dominant_cluster_id]
+        cluster_support_ratio = dominant_cluster_size / float(total_inliers)
+
+    meets_min_inliers = dominant_cluster_size >= config.min_inliers
+    meets_support_ratio = cluster_support_ratio >= config.cluster_min_support_ratio
+
+    if config.spatial_cluster_guard:
+        if meets_min_inliers and meets_support_ratio:
+            cluster_indices = np.where(labels == dominant_cluster_id)[0]
+            filtered_src = pts_src[cluster_indices]
+            filtered_dst = pts_dst[cluster_indices]
+            diag = {
+                "ransac_inliers_count": total_inliers,
+                "num_clusters": num_clusters,
+                "dominant_cluster_size": dominant_cluster_size,
+                "cluster_support_ratio": round(cluster_support_ratio, 4),
+                "filtered_inliers_count": len(filtered_src),
+                "is_rejected_by_guard": False,
+            }
+            return filtered_src, filtered_dst, diag, False
+        else:
+            diag = {
+                "ransac_inliers_count": total_inliers,
+                "num_clusters": num_clusters,
+                "dominant_cluster_size": dominant_cluster_size,
+                "cluster_support_ratio": round(cluster_support_ratio, 4),
+                "filtered_inliers_count": 0,
+                "is_rejected_by_guard": True,
+            }
+            return empty_pts, empty_pts, diag, True
+    else:
+        diag = {
+            "ransac_inliers_count": total_inliers,
+            "num_clusters": num_clusters,
+            "dominant_cluster_size": dominant_cluster_size,
+            "cluster_support_ratio": round(cluster_support_ratio, 4),
+            "filtered_inliers_count": total_inliers,
+            "is_rejected_by_guard": False,
+        }
+        return pts_src, pts_dst, diag, False
 
 
 def _count_unique_spatial_points(points: np.ndarray, tolerance: float = 6.0) -> int:
@@ -259,6 +376,15 @@ def detect_copy_move(
     empty_mask = np.zeros((h, w), dtype=np.uint8)
     empty_pts = np.empty((0, 2), dtype=np.float32)
 
+    default_diag: dict[str, Any] = {
+        "ransac_inliers_count": 0,
+        "num_clusters": 0,
+        "dominant_cluster_size": 0,
+        "cluster_support_ratio": 0.0,
+        "filtered_inliers_count": 0,
+        "is_rejected_by_guard": False,
+    }
+
     # 1. SIFT ile öznitelik çıkarımı
     sift = cv2.SIFT_create()
     keypoints, descriptors = sift.detectAndCompute(gray, None)
@@ -276,6 +402,7 @@ def detect_copy_move(
             matched_points_src=empty_pts,
             matched_points_dst=empty_pts,
             config=config,
+            cluster_diagnostics=default_diag,
         )
 
     # 2. Öz-Eşleştirme ve Aday Eşleşmelerin Filtrelenmesi (Self-Matching KNN)
@@ -291,6 +418,7 @@ def detect_copy_move(
             matched_points_src=empty_pts,
             matched_points_dst=empty_pts,
             config=config,
+            cluster_diagnostics=default_diag,
         )
 
     bf = cv2.BFMatcher(cv2.NORM_L2)
@@ -334,6 +462,7 @@ def detect_copy_move(
             matched_points_src=empty_pts,
             matched_points_dst=empty_pts,
             config=config,
+            cluster_diagnostics=default_diag,
         )
 
     pts_src = np.float32([keypoints[p[0]].pt for p in candidate_pairs])
@@ -358,12 +487,21 @@ def detect_copy_move(
             matched_points_src=empty_pts,
             matched_points_dst=empty_pts,
             config=config,
+            cluster_diagnostics=default_diag,
         )
 
     inliers_mask = inliers.ravel() == 1
     num_inliers = int(np.sum(inliers_mask))
 
     if num_inliers < config.min_inliers:
+        diag_early = {
+            "ransac_inliers_count": num_inliers,
+            "num_clusters": 0,
+            "dominant_cluster_size": 0,
+            "cluster_support_ratio": 0.0,
+            "filtered_inliers_count": 0,
+            "is_rejected_by_guard": False,
+        }
         return CopyMoveResult(
             mask=empty_mask,
             is_tampered=False,
@@ -374,6 +512,7 @@ def detect_copy_move(
             matched_points_src=empty_pts,
             matched_points_dst=empty_pts,
             config=config,
+            cluster_diagnostics=diag_early,
         )
 
     inlier_pts_src = pts_src[inliers_mask]
@@ -382,6 +521,14 @@ def detect_copy_move(
     # 5. Geometrik Tutarlılık ve Fiziksel Çeşitlilik Doğrulaması
     # A. Afin matris fiziksel olarak makul bir kopyalama mı (tekil/çökmüş dönüşüm değil)?
     if not _is_valid_affine_transform(transform_matrix):
+        diag_early = {
+            "ransac_inliers_count": num_inliers,
+            "num_clusters": 0,
+            "dominant_cluster_size": 0,
+            "cluster_support_ratio": 0.0,
+            "filtered_inliers_count": 0,
+            "is_rejected_by_guard": False,
+        }
         return CopyMoveResult(
             mask=empty_mask,
             is_tampered=False,
@@ -392,11 +539,31 @@ def detect_copy_move(
             matched_points_src=empty_pts,
             matched_points_dst=empty_pts,
             config=config,
+            cluster_diagnostics=diag_early,
         )
 
-    # B. İnlier noktalar fiziksel olarak yeterli sayıda bağımsız konuma dağılmış mı?
-    unique_src_count = _count_unique_spatial_points(inlier_pts_src, tolerance=6.0)
-    unique_dst_count = _count_unique_spatial_points(inlier_pts_dst, tolerance=6.0)
+    # B. Uzamsal Tutarlılık Kümeleme Koruması (DBSCAN Spatial Cluster Guard)
+    filtered_pts_src, filtered_pts_dst, diag, is_rejected = _apply_spatial_clustering(
+        inlier_pts_src, inlier_pts_dst, config
+    )
+
+    if is_rejected:
+        return CopyMoveResult(
+            mask=empty_mask,
+            is_tampered=False,
+            num_keypoints=num_keypoints,
+            num_candidate_matches=num_candidates,
+            num_inliers=0,
+            transform_matrix=None,
+            matched_points_src=empty_pts,
+            matched_points_dst=empty_pts,
+            config=config,
+            cluster_diagnostics=diag,
+        )
+
+    # C. İnlier noktalar fiziksel olarak yeterli sayıda bağımsız konuma dağılmış mı?
+    unique_src_count = _count_unique_spatial_points(filtered_pts_src, tolerance=6.0)
+    unique_dst_count = _count_unique_spatial_points(filtered_pts_dst, tolerance=6.0)
 
     if unique_src_count < config.min_inliers or unique_dst_count < config.min_inliers:
         return CopyMoveResult(
@@ -409,14 +576,14 @@ def detect_copy_move(
             matched_points_src=empty_pts,
             matched_points_dst=empty_pts,
             config=config,
+            cluster_diagnostics=diag,
         )
-
 
     # 6. Şüpheli Bölge Maskesi Üretimi
     tampered_mask = _build_tampered_mask(
         shape=(h, w),
-        src_points=inlier_pts_src,
-        dst_points=inlier_pts_dst,
+        src_points=filtered_pts_src,
+        dst_points=filtered_pts_dst,
         config=config,
     )
 
@@ -425,10 +592,11 @@ def detect_copy_move(
         is_tampered=True,
         num_keypoints=num_keypoints,
         num_candidate_matches=num_candidates,
-        num_inliers=num_inliers,
+        num_inliers=len(filtered_pts_src),
         transform_matrix=transform_matrix,
-        matched_points_src=inlier_pts_src,
-        matched_points_dst=inlier_pts_dst,
+        matched_points_src=filtered_pts_src,
+        matched_points_dst=filtered_pts_dst,
         config=config,
+        cluster_diagnostics=diag,
     )
 

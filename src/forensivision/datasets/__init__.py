@@ -9,6 +9,7 @@ indekslenmesini ve manifest üretimini sağlar.
 from forensivision.datasets.base import BaseDataset, DatasetSample
 from forensivision.datasets.columbia import ColumbiaDataset
 from forensivision.datasets.comofod import COMOFOD_ATTACK_MAP, CoMoFoDDataset
+from forensivision.datasets.defacto import DefactoDataset
 from forensivision.datasets.manifest import (
     build_manifest,
     load_manifest,
@@ -21,6 +22,7 @@ __all__ = [
     "CoMoFoDDataset",
     "COMOFOD_ATTACK_MAP",
     "ColumbiaDataset",
+    "DefactoDataset",
     "build_manifest",
     "save_manifest",
     "load_manifest",

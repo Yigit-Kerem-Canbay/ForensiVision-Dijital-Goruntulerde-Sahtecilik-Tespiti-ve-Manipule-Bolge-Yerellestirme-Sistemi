@@ -68,6 +68,23 @@ class DatasetSample:
         return res
 
 
+def _safe_read_image(file_path: Path | str, flags: int = cv2.IMREAD_COLOR) -> np.ndarray | None:
+    """Windows ve POSIX sistemlerde Türkçe veya Unicode karakterli dosya yollarını güvenle okur."""
+    p = Path(file_path)
+    if not p.is_file():
+        return None
+    try:
+        buf = np.fromfile(str(p), dtype=np.uint8)
+        if buf.size == 0:
+            return None
+        decoded = cv2.imdecode(buf, flags)
+        if decoded is not None:
+            return decoded
+    except Exception:
+        pass
+    return cv2.imread(str(p), flags)
+
+
 class BaseDataset(ABC):
     """Tüm adli veri seti okuyucuları için ortak soyut temel sınıf."""
 
@@ -109,7 +126,7 @@ class BaseDataset(ABC):
         if not sample.image_path.exists():
             raise FileNotFoundError(f"Görüntü dosyası mevcut değil: {sample.image_path}")
 
-        img = cv2.imread(str(sample.image_path))
+        img = _safe_read_image(sample.image_path, cv2.IMREAD_COLOR)
         if img is None:
             raise ValueError(f"Görüntü dosyası okunamadı veya bozuk: {sample.image_path}")
         return img
@@ -134,29 +151,54 @@ class BaseDataset(ABC):
         Raises:
             ValueError: Boyut uyuşmazlığı varsa veya maske okunamıyorsa.
         """
+        has_any_mask = bool(sample.mask_path or sample.target_mask_path or sample.source_mask_path)
         # Temiz/Orijinal görüntülerde tüm pikseller 0'dır
-        if sample.is_authentic() or sample.mask_path is None:
+        if sample.is_authentic() or not has_any_mask:
             if target_shape is None:
                 img = self.load_image(sample)
                 target_shape = img.shape[:2]
             return np.zeros(target_shape, dtype=np.uint8)
 
-        # Hedef odaklı özel maske modu istenmişse ve ayrı hedef maskesi varsa
-        mask_file_to_load = sample.mask_path
-        if mask_mode == "target_only" and sample.target_mask_path and sample.target_mask_path.exists():
-            mask_file_to_load = sample.target_mask_path
-        elif mask_mode == "source_only" and sample.source_mask_path and sample.source_mask_path.exists():
-            mask_file_to_load = sample.source_mask_path
+        # DEFACTO gibi hem kaynak hem hedef maskesi ayrı dosyalar olan veri setlerinde 'both' modu:
+        if (
+            mask_mode == "both"
+            and sample.target_mask_path
+            and sample.source_mask_path
+            and sample.target_mask_path.exists()
+            and sample.source_mask_path.exists()
+        ):
+            tgt_raw = _safe_read_image(sample.target_mask_path, cv2.IMREAD_GRAYSCALE)
+            src_raw = _safe_read_image(sample.source_mask_path, cv2.IMREAD_GRAYSCALE)
+            if tgt_raw is None or src_raw is None:
+                raise ValueError("Kaynak veya hedef maske dosyası gri seviyede okunamadı.")
 
-        if not mask_file_to_load.exists():
-            raise FileNotFoundError(f"Maske dosyası mevcut değil: {mask_file_to_load}")
+            # JPEG sıkıştırma artefaktlarını (probe) veya yumuşatmayı (donor feathering) temizle
+            tgt_bin = (tgt_raw > 127) if tgt_raw.max() > 127 else (tgt_raw > 0)
+            src_bin = (src_raw > 127) if src_raw.max() > 127 else (src_raw > 0)
+            bin_mask = ((tgt_bin | src_bin).astype(np.uint8)) * 255
 
-        mask_raw = cv2.imread(str(mask_file_to_load), cv2.IMREAD_GRAYSCALE)
-        if mask_raw is None:
-            raise ValueError(f"Maske dosyası gri seviyede okunamadı: {mask_file_to_load}")
+        else:
+            # Tek bir maske dosyası yükleme (CoMoFoD birleşik maskesi veya tekil maske seçimi)
+            mask_file_to_load = sample.mask_path
+            if mask_mode == "target_only" and sample.target_mask_path and sample.target_mask_path.exists():
+                mask_file_to_load = sample.target_mask_path
+            elif mask_mode == "source_only" and sample.source_mask_path and sample.source_mask_path.exists():
+                mask_file_to_load = sample.source_mask_path
+            elif mask_file_to_load is None:
+                mask_file_to_load = sample.target_mask_path or sample.source_mask_path
 
-        # İkili formata çevir: 0 dışındaki tüm pozitif pikseller ön plan (255)
-        bin_mask = (mask_raw > 0).astype(np.uint8) * 255
+            if mask_file_to_load is None or not mask_file_to_load.exists():
+                raise FileNotFoundError(f"Maske dosyası mevcut değil: {mask_file_to_load}")
+
+            mask_raw = _safe_read_image(mask_file_to_load, cv2.IMREAD_GRAYSCALE)
+            if mask_raw is None:
+                raise ValueError(f"Maske dosyası gri seviyede okunamadı: {mask_file_to_load}")
+
+            # JPEG sıkıştırma artefaktları varsa (>127), yoksa pozitif piksel (>0)
+            if mask_raw.max() > 127:
+                bin_mask = (mask_raw > 127).astype(np.uint8) * 255
+            else:
+                bin_mask = (mask_raw > 0).astype(np.uint8) * 255
 
         # Boyut uyuşmazlığı denetimi
         if target_shape is not None and bin_mask.shape != target_shape:
