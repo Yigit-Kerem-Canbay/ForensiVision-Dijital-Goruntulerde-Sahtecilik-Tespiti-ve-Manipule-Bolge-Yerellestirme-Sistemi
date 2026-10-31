@@ -70,6 +70,13 @@ def run_evaluation(
     cluster_eps: float = 35.0,
     cluster_min_samples: int = 3,
     cluster_min_support_ratio: float = 0.50,
+    min_spatial_distance: float | None = None,
+    ratio_threshold: float | None = None,
+    point_radius: int | None = None,
+    morph_kernel_size: int | None = None,
+    splicing_config: SplicingConfig | None = None,
+    splicing_fusion_mode: str | None = None,
+    splicing_fill_contours: bool = False,
     group_ids_file: str | Path | None = None,
 ) -> dict[str, Any]:
     """Veri seti üzerinde değerlendirme deneyini çalıştırır ve çıktıları kaydeder."""
@@ -91,8 +98,16 @@ def run_evaluation(
             cfg_dict["cluster_eps_px"] = cluster_eps
             cfg_dict["cluster_min_samples"] = cluster_min_samples
             cfg_dict["cluster_min_support_ratio"] = cluster_min_support_ratio
+        if min_spatial_distance is not None:
+            cfg_dict["min_spatial_distance"] = min_spatial_distance
+        if ratio_threshold is not None:
+            cfg_dict["ratio_threshold"] = ratio_threshold
+        if point_radius is not None:
+            cfg_dict["point_radius"] = point_radius
+        if morph_kernel_size is not None:
+            cfg_dict["morph_kernel_size"] = morph_kernel_size
         effective_cm_config = CopyMoveConfig(**cfg_dict)
-    elif min_inliers is not None or hull_fill_guard or spatial_cluster_guard:
+    elif min_inliers is not None or hull_fill_guard or spatial_cluster_guard or min_spatial_distance is not None or ratio_threshold is not None or point_radius is not None or morph_kernel_size is not None:
         cfg_dict = {}
         if min_inliers is not None:
             cfg_dict["min_inliers"] = min_inliers
@@ -104,9 +119,30 @@ def run_evaluation(
             cfg_dict["cluster_eps_px"] = cluster_eps
             cfg_dict["cluster_min_samples"] = cluster_min_samples
             cfg_dict["cluster_min_support_ratio"] = cluster_min_support_ratio
+        if min_spatial_distance is not None:
+            cfg_dict["min_spatial_distance"] = min_spatial_distance
+        if ratio_threshold is not None:
+            cfg_dict["ratio_threshold"] = ratio_threshold
+        if point_radius is not None:
+            cfg_dict["point_radius"] = point_radius
+        if morph_kernel_size is not None:
+            cfg_dict["morph_kernel_size"] = morph_kernel_size
         effective_cm_config = CopyMoveConfig(**cfg_dict)
     else:
         effective_cm_config = CopyMoveConfig()
+
+    # Splicing konfigürasyonunu belirle
+    if splicing_config is not None:
+        effective_splicing_config = splicing_config
+    else:
+        spl_dict = {}
+        if splicing_fusion_mode is not None:
+            spl_dict["fusion_mode"] = splicing_fusion_mode
+        if splicing_fill_contours:
+            spl_dict["fill_contours"] = True
+            spl_dict["morph_kernel_size"] = 11
+            spl_dict["min_region_area"] = 150
+        effective_splicing_config = SplicingConfig(**spl_dict) if spl_dict else SplicingConfig()
 
     # 1. Veri setini yükle
     dataset = custom_dataset or get_dataset_reader(dataset_name, root_dir, task=task)
@@ -240,7 +276,7 @@ def run_evaluation(
                         "is_rejected_by_guard": res.cluster_diagnostics.get("is_rejected_by_guard", False),
                     })
             elif effective_task == "splicing":
-                res = detect_splicing(img)
+                res = detect_splicing(img, config=effective_splicing_config)
                 pred_mask = res.mask
                 is_tampered_decision = res.is_suspicious
             else:
@@ -450,6 +486,7 @@ def run_evaluation(
         "dataset_name": dataset.name,
         "task_type": effective_task,
         "copy_move_config": asdict(effective_cm_config) if effective_task == "copy_move" else None,
+        "splicing_config": asdict(effective_splicing_config) if effective_task == "splicing" else None,
         "mask_mode": mask_mode,
         "seed": seed,
         "selected_group_ids": selected_group_ids,
@@ -668,6 +705,12 @@ def main() -> None:
     parser.add_argument("--cluster-eps", type=float, default=35.0, help="DBSCAN maksimum komşuluk mesafesi (piksel, varsayılan: 35.0)")
     parser.add_argument("--cluster-min-samples", type=int, default=3, help="DBSCAN çekirdek nokta için minimum örnek sayısı (varsayılan: 3)")
     parser.add_argument("--cluster-min-support-ratio", type=float, default=0.50, help="Baskın küme için minimum destek oranı (varsayılan: 0.50)")
+    parser.add_argument("--min-spatial-distance", type=float, default=None, help="Öz-eşleme minimum uzamsal mesafe eşiği (piksel, varsayılan: 25.0)")
+    parser.add_argument("--ratio-threshold", type=float, default=None, help="Lowe oran testi eşiği (varsayılan: 0.75)")
+    parser.add_argument("--point-radius", type=int, default=None, help="İnlier anahtar nokta çizim yarıçapı (varsayılan: 12)")
+    parser.add_argument("--morph-kernel-size", type=int, default=None, help="Morfolojik kapanış çekirdek boyutu (varsayılan: 5)")
+    parser.add_argument("--splicing-fusion-mode", type=str, default=None, help="Splicing füzyon modu ('union', 'intersection', 'ela_only', 'noise_only')")
+    parser.add_argument("--splicing-fill-contours", action="store_true", help="Splicing ELA tohumlarını morfolojik köprüleme ve kontur doldurmayla genişlet")
     parser.add_argument("--group-ids-file", type=str, default=None, help="Yalnızca belirtilen dosyada yer alan sahne/grup kimliklerini değerlendir (örn. holdout listesi)")
 
     args = parser.parse_args()
@@ -684,6 +727,12 @@ def main() -> None:
     print(f"Min Inliers Eşiği   : {args.min_inliers if args.min_inliers is not None else 'Varsayılan (4)'}")
     print(f"Zarf Doldurma Koruma: {args.hull_fill_guard} (Maks. Oran: {args.hull_max_ratio})")
     print(f"Kümeleme Koruması   : {args.spatial_cluster_guard} (Eps: {args.cluster_eps}, MinSamples: {args.cluster_min_samples}, MinDestek: {args.cluster_min_support_ratio})")
+    if args.min_spatial_distance:
+        print(f"Uzamsal Mesafe Eşiği: {args.min_spatial_distance} px")
+    if args.ratio_threshold:
+        print(f"Lowe Oran Eşiği     : {args.ratio_threshold}")
+    if args.splicing_fusion_mode:
+        print(f"Splicing Füzyon     : {args.splicing_fusion_mode} (Kontur Doldur: {args.splicing_fill_contours})")
     print(f"Çıktı               : {args.output}")
     print("=" * 70)
 
@@ -705,6 +754,12 @@ def main() -> None:
         cluster_eps=args.cluster_eps,
         cluster_min_samples=args.cluster_min_samples,
         cluster_min_support_ratio=args.cluster_min_support_ratio,
+        min_spatial_distance=args.min_spatial_distance,
+        ratio_threshold=args.ratio_threshold,
+        point_radius=args.point_radius,
+        morph_kernel_size=args.morph_kernel_size,
+        splicing_fusion_mode=args.splicing_fusion_mode,
+        splicing_fill_contours=args.splicing_fill_contours,
         group_ids_file=args.group_ids_file,
     )
 

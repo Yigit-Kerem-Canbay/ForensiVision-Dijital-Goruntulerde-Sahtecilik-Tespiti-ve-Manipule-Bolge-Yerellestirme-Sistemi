@@ -57,6 +57,8 @@ class SplicingConfig:
     fusion_mode: str = "union"
     min_region_area: int = 80
     morph_kernel_size: int = 5
+    fill_contours: bool = False
+
 
 
 @dataclass(frozen=True)
@@ -149,7 +151,11 @@ def detect_splicing(
 
     # 2. Görüntüyü Dizi Olarak Al ve Gürültü Analizini Çalıştır
     if isinstance(image_input, (str, Path)):
-        img_arr = cv2.imread(str(image_input))
+        p = Path(image_input)
+        if not p.is_file():
+            raise FileNotFoundError(f"Görüntü dosyası bulunamadı: {p}")
+        buf = np.fromfile(str(p), dtype=np.uint8)
+        img_arr = cv2.imdecode(buf, cv2.IMREAD_COLOR)
         if img_arr is None:
             raise ValueError(f"Görüntü dosyası okunamadı: {image_input}")
     else:
@@ -197,7 +203,17 @@ def detect_splicing(
         fused_mask = cv2.morphologyEx(fused_mask, cv2.MORPH_CLOSE, kernel)
 
     final_mask = _filter_small_regions(fused_mask, config.min_region_area)
+
+    if config.fill_contours and np.count_nonzero(final_mask) > 0:
+        contours, _ = cv2.findContours(final_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        filled_mask = np.zeros_like(final_mask)
+        for c in contours:
+            if cv2.contourArea(c) >= config.min_region_area:
+                cv2.drawContours(filled_mask, [c], -1, 255, thickness=-1)
+        final_mask = filled_mask
+
     is_suspicious = bool(np.count_nonzero(final_mask) > 0)
+
 
     metadata: dict[str, Any] = {
         "ela_applicable": ela_res.is_applicable,

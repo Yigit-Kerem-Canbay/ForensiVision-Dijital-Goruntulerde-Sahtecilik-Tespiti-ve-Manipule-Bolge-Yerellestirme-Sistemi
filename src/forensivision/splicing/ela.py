@@ -127,8 +127,9 @@ def analyze_ela(
         detected_jpeg = _is_jpeg_file(file_path)
         actual_is_jpeg = detected_jpeg if is_jpeg is None else is_jpeg
 
-        # Görüntüyü oku
-        loaded_img = cv2.imread(str(file_path))
+        # Görüntüyü oku (Unicode ve Türkçe karakter güvenli)
+        buf = np.fromfile(str(file_path), dtype=np.uint8)
+        loaded_img = cv2.imdecode(buf, cv2.IMREAD_COLOR)
         if loaded_img is None:
             raise ValueError(f"Görüntü dosyası OpenCV ile okunamadı veya bozuk: {file_path}")
         orig_bgr = loaded_img
