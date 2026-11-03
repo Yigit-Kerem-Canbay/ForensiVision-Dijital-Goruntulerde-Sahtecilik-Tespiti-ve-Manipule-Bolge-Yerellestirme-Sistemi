@@ -73,6 +73,10 @@ data/output/**
 *.pth
 *.pt
 *.onnx
+*.onnx.data
+*.zip
+models/*.onnx.data
+models/*.pth
 
 # Testing & Coverage
 .pytest_cache/
