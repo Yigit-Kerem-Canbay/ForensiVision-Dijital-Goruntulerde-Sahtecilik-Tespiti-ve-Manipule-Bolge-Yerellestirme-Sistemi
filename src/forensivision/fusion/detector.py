@@ -154,7 +154,8 @@ class ForensiVisionFusionDetector:
         norm = ((img_res.astype(np.float32) / 255.0) - self.mean) / self.std
         inp = np.transpose(norm, (2, 0, 1))[np.newaxis, ...].astype(np.float32)
 
-        outs = self.session.run(None, {"input_image": inp})
+        input_name = self.session.get_inputs()[0].name
+        outs = self.session.run(None, {input_name: inp})
         seg_logits = outs[0][0, 0]  # (256, 256)
         cls_logit = float(outs[1][0])
 

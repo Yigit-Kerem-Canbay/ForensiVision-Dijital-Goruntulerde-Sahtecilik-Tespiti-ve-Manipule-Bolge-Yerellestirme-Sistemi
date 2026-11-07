@@ -6,6 +6,10 @@ oluşturulan tahrifatların SIFT öznitelik çıkarımı, öz-eşleme filtreleme
 RANSAC geometrik tutarlılık doğrulaması ve morfolojik bölge yerelleştirmesi ile analizi.
 """
 
+from forensivision.copy_move.dense_detector import (
+    DenseCopyMoveResult,
+    DenseFieldCopyMoveDetector,
+)
 from forensivision.copy_move.detector import (
     CopyMoveConfig,
     CopyMoveResult,
@@ -16,4 +20,6 @@ __all__ = [
     "detect_copy_move",
     "CopyMoveConfig",
     "CopyMoveResult",
+    "DenseCopyMoveResult",
+    "DenseFieldCopyMoveDetector",
 ]

@@ -1,0 +1,8 @@
+{
+  "optimal_threshold_16": 0.8527,
+  "optimal_threshold_13": 0.8429,
+  "dl_only_threshold": 0.8429,
+  "clean_specificity": 0.946,
+  "notes": "Kaggle 3-Epoch Pilot Sonucu (7. Satir 64/72)"
+}
+

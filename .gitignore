@@ -65,9 +65,14 @@ data/ground_truth/**
 data/manifests/**
 !data/manifests/**/
 !data/manifests/**/.gitkeep
+data/clean_coco_200/**
 data/output/**
 !data/output/**/
 !data/output/**/.gitkeep
+
+# Benchmark test outputs
+benchmark_*.json
+
 
 *.h5
 *.pth
