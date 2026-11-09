@@ -1,8 +1,89 @@
 {
-  "optimal_threshold_16": 0.8527,
-  "optimal_threshold_13": 0.8429,
-  "dl_only_threshold": 0.8429,
-  "clean_specificity": 0.946,
-  "notes": "Kaggle 3-Epoch Pilot Sonucu (7. Satir 64/72)"
+  "optimal_threshold": 0.7727,
+  "dl_only_threshold": 0.4227,
+  "calibration_fit_samples": 1440,
+  "calibration_thresh_samples": 960,
+  "test_dl_only": {
+    "clean_specificity": 0.9225,
+    "clean_fp_square": 0.0976,
+    "clean_fp_padded": 0.0764,
+    "copy_move_recall": 0.7,
+    "splicing_recall": 0.91,
+    "tampered_recall": 0.805,
+    "overall_accuracy": 0.8442,
+    "roc_auc": 0.9377
+  },
+  "test_meta_classifier": {
+    "clean_specificity": 0.9137,
+    "clean_fp_square": 0.122,
+    "clean_fp_padded": 0.0843,
+    "copy_move_recall": 0.7063,
+    "splicing_recall": 0.8975,
+    "tampered_recall": 0.8019,
+    "overall_accuracy": 0.8392,
+    "roc_auc": 0.9374
+  },
+  "test_localization_metrics": {
+    "copy_move_iou": 0.4662,
+    "copy_move_dice": 0.5447,
+    "splicing_iou": 0.6833,
+    "splicing_dice": 0.7694
+  },
+  "multi_format_robustness": {
+    "jpeg_q90_standard": {
+      "clean_specificity": 0.9137,
+      "clean_fp_square": 0.122,
+      "clean_fp_padded": 0.0843,
+      "copy_move_recall": 0.7063,
+      "splicing_recall": 0.8975,
+      "tampered_recall": 0.8019,
+      "overall_accuracy": 0.8392,
+      "roc_auc": 0.9374
+    },
+    "png": {
+      "clean_specificity": 0.95,
+      "clean_fp_square": 0.0769,
+      "clean_fp_padded": 0.0481,
+      "copy_move_recall": 0.665,
+      "splicing_recall": 0.91,
+      "tampered_recall": 0.7875,
+      "overall_accuracy": 0.8417,
+      "roc_auc": 0.9503
+    },
+    "jpeg_q75": {
+      "clean_specificity": 0.925,
+      "clean_fp_square": 0.1538,
+      "clean_fp_padded": 0.0695,
+      "copy_move_recall": 0.69,
+      "splicing_recall": 0.885,
+      "tampered_recall": 0.7875,
+      "overall_accuracy": 0.8333,
+      "roc_auc": 0.93
+    },
+    "whatsapp": {
+      "clean_specificity": 0.85,
+      "clean_fp_square": 0.1538,
+      "clean_fp_padded": 0.1497,
+      "copy_move_recall": 0.71,
+      "splicing_recall": 0.865,
+      "tampered_recall": 0.7875,
+      "overall_accuracy": 0.8083,
+      "roc_auc": 0.8957
+    }
+  },
+  "cross_dataset_casia_v2": null,
+  "logreg_coef": [
+    [
+      1.8252453276576466,
+      2.7650740769058384,
+      0.14841859227124202,
+      0.8205962781712638,
+      1.432737264640136,
+      0.5990147730144216,
+      0.10841078150429544,
+      0.05719043508443685,
+      0.2532128557818525,
+      0.18037199610225702
+    ]
+  ]
 }
-
